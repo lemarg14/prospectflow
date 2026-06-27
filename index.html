@@ -13,6 +13,31 @@
   --glass:rgba(255,255,255,.08); --glass-strong:rgba(255,255,255,.14);
   --border:rgba(255,255,255,.16); --text:#eef0ff; --muted:#a4a7c7;
 }
+/* ----- THÈME CLAIR ----- */
+html[data-theme="light"]{
+  --bg1:#eef1fb; --bg2:#e7ecf9;
+  --accent:#6d4bff; --accent2:#0891b2; --accent3:#db4d9d;
+  --good:#16a34a; --warn:#d97706; --bad:#dc2626; --hot:#e11d6b;
+  --glass:rgba(30,30,70,.05); --glass-strong:rgba(30,30,70,.09);
+  --border:rgba(30,30,80,.14); --text:#1b1d2e; --muted:#5a5e78;
+}
+html[data-theme="light"] body{
+  background:radial-gradient(1200px 800px at 10% 0%,#e9e3ff 0%,transparent 50%),
+             radial-gradient(1000px 700px at 90% 20%,#d8f1fb 0%,transparent 45%),
+             radial-gradient(900px 700px at 50% 100%,#ffe6f4 0%,transparent 50%),
+             linear-gradient(160deg,#f4f6ff,#eaf0fe);
+}
+html[data-theme="light"] ::-webkit-scrollbar-thumb{background:rgba(0,0,0,.18)}
+html[data-theme="light"] .sidebar{background:rgba(255,255,255,.78)}
+html[data-theme="light"] thead th{background:rgba(245,247,255,.9)}
+html[data-theme="light"] .modal{background:linear-gradient(160deg,#ffffff,#f3f5ff)}
+html[data-theme="light"] .auth-card{background:linear-gradient(160deg,#ffffff,#f1f4ff)}
+html[data-theme="light"] select.glass option{background:#ffffff;color:#1b1d2e}
+html[data-theme="light"] .mobile-topbar{background:rgba(255,255,255,.88)!important}
+html[data-theme="light"] .loader{background:#eef1fb}
+html[data-theme="light"] .prio.froid{color:#2563eb}
+html[data-theme="light"] .prio.tiede{color:#b45309}
+html[data-theme="light"] .prio.chaud{color:#be1d5e}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   background:radial-gradient(1200px 800px at 10% 0%,#2b1a5e 0%,transparent 50%),
@@ -67,6 +92,10 @@ body.is-admin .admin-only{display:flex}
 .logout{margin-top:10px;width:100%;text-align:center;padding:8px;border-radius:10px;border:1px solid var(--border);
   background:var(--glass);color:var(--muted);cursor:pointer;font-weight:600;font-size:12px}
 .logout:hover{color:var(--text);background:var(--glass-strong)}
+.theme-switch{display:flex;gap:4px;margin-bottom:8px;background:var(--glass);padding:4px;border-radius:10px}
+.theme-switch button{flex:1;border:none;background:transparent;cursor:pointer;padding:6px 0;border-radius:8px;font-size:14px;line-height:1}
+.theme-switch button.active{background:var(--glass-strong);box-shadow:inset 0 0 0 1px var(--border)}
+.mt-theme{background:var(--glass);border:1px solid var(--border);color:var(--text);padding:7px 11px;border-radius:10px;font-size:14px;cursor:pointer}
 
 .main{flex:1;padding:26px 32px;max-width:calc(100vw - 240px)}
 .topbar{display:flex;align-items:center;gap:16px;margin-bottom:24px;flex-wrap:wrap}
@@ -290,7 +319,7 @@ select.glass.fsel{width:auto;padding:7px 10px;font-size:13px}
 
 <!-- APP -->
 <div id="app">
-<div class="mobile-topbar"><span class="mt-brand">📞 ProspectFlow</span><button class="mt-logout" onclick="doLogout()">Déconnexion</button></div>
+<div class="mobile-topbar"><span class="mt-brand">📞 ProspectFlow</span><div style="display:flex;gap:8px"><button class="mt-theme" onclick="cycleTheme()" title="Changer de thème">🌗</button><button class="mt-logout" onclick="doLogout()">Déconnexion</button></div></div>
 <div class="layout">
   <aside class="sidebar">
     <div class="brand"><div class="logo">📞</div><div><h1>ProspectFlow</h1><p>CRM Cloud</p></div></div>
@@ -304,6 +333,11 @@ select.glass.fsel{width:auto;padding:7px 10px;font-size:13px}
     <div class="user-box">
       <div class="nm" id="meName">—</div>
       <div class="rl" id="meRole">—</div>
+      <div class="theme-switch">
+        <button data-theme-opt="light" onclick="setTheme('light')" title="Clair">☀️</button>
+        <button data-theme-opt="dark" onclick="setTheme('dark')" title="Sombre">🌙</button>
+        <button data-theme-opt="auto" onclick="setTheme('auto')" title="Automatique (système)">💻</button>
+      </div>
       <button class="logout" onclick="doLogout()">Déconnexion</button>
     </div>
   </aside>
@@ -517,6 +551,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 /* ====================================================================
    ⬆️⬆️⬆️  (la clé "anon" est publique, protégée par la sécurité RLS)  ⬆️⬆️⬆️
    ==================================================================== */
+
+/* ---------- THÈME clair / sombre / auto (mémorisé) ---------- */
+function effectiveTheme(pref){ if(pref==='auto'){ try{ return window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'; }catch(e){ return 'dark'; } } return pref; }
+function applyTheme(){ const pref=localStorage.getItem('pf_theme')||'dark'; document.documentElement.dataset.theme=effectiveTheme(pref); document.querySelectorAll('[data-theme-opt]').forEach(b=>b.classList.toggle('active',b.dataset.themeOpt===pref)); }
+function setTheme(mode){ localStorage.setItem('pf_theme',mode); applyTheme(); }
+function cycleTheme(){ const order=['dark','light','auto'],cur=localStorage.getItem('pf_theme')||'dark'; setTheme(order[(order.indexOf(cur)+1)%order.length]); }
+try{ window.matchMedia('(prefers-color-scheme: light)').addEventListener('change',()=>{ if((localStorage.getItem('pf_theme')||'dark')==='auto') applyTheme(); }); }catch(e){}
+applyTheme();
 
 const STATUSES = [
   {id:'nouveau',label:'Nouveau',color:'#a4a7c7'},
