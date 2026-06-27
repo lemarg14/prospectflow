@@ -320,7 +320,10 @@ select.glass.fsel{width:auto;padding:7px 10px;font-size:13px}
     <!-- PIPELINE -->
     <section class="view" id="view-pipeline">
       <div class="topbar"><div><h2>Pipeline</h2><div class="sub">Glisse les cartes pour changer de statut</div></div>
-        <div class="spacer"></div><button class="btn btn-primary" onclick="openLeadModal()">＋ Lead</button></div>
+        <div class="spacer"></div>
+        <span class="flbl">Segment</span>
+        <select class="glass fsel" id="pipeSegFilter" onchange="renderPipeline()"></select>
+        <button class="btn btn-primary" onclick="openLeadModal()">＋ Lead</button></div>
       <div class="board" id="pipelineBoard"></div>
     </section>
 
@@ -645,8 +648,11 @@ function fillSelects(){
   // assigné à
   const assignOpts='<option value="">— Non assigné —</option>'+(users.filter(u=>u.role==='commercial').map(u=>`<option value="${u.id}">${escapeHtml(u.full_name||u.email)}</option>`).join(''));
   document.getElementById('f_assigned').innerHTML=assignOpts;
-  // filtre segment
+  // filtre segment (base de leads)
   document.getElementById('segFilter').innerHTML='<option value="all">Tous</option>'+segments.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  // filtre segment (pipeline)
+  const pf=document.getElementById('pipeSegFilter');
+  if(pf){ const cur=pf.value; pf.innerHTML='<option value="all">Tous les segments</option>'+segments.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join(''); if([...pf.options].some(o=>o.value===cur)) pf.value=cur; }
   // filtre source (valeurs distinctes)
   const sf=document.getElementById('sourceFilter');
   if(sf){ const cur=sf.value; const sources=[...new Set(leads.map(l=>l.source).filter(Boolean))].sort(); sf.innerHTML='<option value="all">Toutes</option>'+sources.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join(''); if([...sf.options].some(o=>o.value===cur)) sf.value=cur; }
@@ -875,8 +881,10 @@ function renderTeamStats(){
 
 /* ---------- PIPELINE (drag&drop) ---------- */
 function renderPipeline(){
+  const seg=getFilterVal('pipeSegFilter');
+  const base=seg==='all'?leads:leads.filter(l=>l.segment_id===seg);
   document.getElementById('pipelineBoard').innerHTML=STATUSES.map(s=>{
-    const items=leads.filter(l=>l.status===s.id);
+    const items=base.filter(l=>l.status===s.id);
     return `<div class="col"><div class="col-head"><span class="dot" style="background:${s.color}"></span>${s.label}<span class="col-count">${items.length}</span></div>
       <div class="col-body" data-status="${s.id}" ondragover="pipeOver(event,this)" ondragleave="this.classList.remove('drop-target')" ondrop="pipeDrop(event,this,'${s.id}')">
       ${items.map(l=>{const phone=l.phone||l.mobile||'';return `<div class="mini-card" draggable="true" ondragstart="pipeStart(event,'${l.id}')" ondragend="pipeEnd(event)" onclick="openLeadModal('${l.id}')"><div class="co"><span class="grip">⠿</span>${escapeHtml(l.company||'—')}</div><div class="ct">${escapeHtml(l.contact||'')}</div><div class="row2"><span class="prio ${l.priority||'froid'}">${({chaud:'🔴',tiede:'🟡',froid:'🔵'})[l.priority||'froid']}</span>${phone?`<a class="phone-link" style="font-size:12px" href="${telHref(phone)}" onclick="event.stopPropagation();logCall('${l.id}')">${escapeHtml(phone)}</a>`:''}</div></div>`}).join('')||'<p style="color:var(--muted);font-size:12px;text-align:center;padding:14px">Glisse un lead ici</p>'}
