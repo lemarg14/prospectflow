@@ -147,6 +147,11 @@ tbody tr:hover{background:var(--glass)}
 select.glass,input.glass,textarea.glass{background:var(--glass);border:1px solid var(--border);border-radius:11px;
   padding:10px 13px;color:var(--text);font-size:14px;outline:none;font-family:inherit;backdrop-filter:blur(8px);width:100%}
 select.glass option{background:#1a1340;color:var(--text)}
+.flbl{font-size:11px;color:var(--muted);align-self:center;text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+select.glass.fsel{width:auto;padding:7px 10px;font-size:13px}
+.bulkbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:12px 16px;border-radius:16px;
+  background:linear-gradient(135deg,rgba(124,92,255,.28),rgba(34,211,238,.14));border:1px solid var(--accent);backdrop-filter:blur(14px)}
+.lead-cb,#selAll{width:17px;height:17px;cursor:pointer;accent-color:#7c5cff}
 
 .overlay{position:fixed;inset:0;background:rgba(8,6,24,.7);backdrop-filter:blur(6px);display:none;
   align-items:center;justify-content:center;z-index:100;padding:20px}
@@ -278,19 +283,32 @@ select.glass option{background:#1a1340;color:var(--text)}
         <button class="btn btn-primary" onclick="openLeadModal()">＋ Lead</button></div>
       <div class="filters" id="statusFilters"></div>
       <div class="filters" style="margin-top:-8px">
-        <span style="font-size:12px;color:var(--muted);align-self:center">Priorité :</span>
+        <span class="flbl">Priorité</span>
         <div class="chip prio-filter active" data-prio="all">Toutes</div>
-        <div class="chip prio-filter" data-prio="chaud">🔴 Chaud</div>
-        <div class="chip prio-filter" data-prio="tiede">🟡 Tiède</div>
-        <div class="chip prio-filter" data-prio="froid">🔵 Froid</div>
-        <span style="font-size:12px;color:var(--muted);align-self:center;margin-left:8px">Segment :</span>
-        <select class="glass" id="segFilter" style="width:auto" onchange="renderLeads()"></select>
+        <div class="chip prio-filter" data-prio="chaud">🔴</div>
+        <div class="chip prio-filter" data-prio="tiede">🟡</div>
+        <div class="chip prio-filter" data-prio="froid">🔵</div>
+        <span class="flbl">Segment</span>
+        <select class="glass fsel" id="segFilter" onchange="renderLeads()"></select>
+        <span class="flbl">Source</span>
+        <select class="glass fsel" id="sourceFilter" onchange="renderLeads()"></select>
+        <span class="flbl">Assigné</span>
+        <select class="glass fsel" id="assignedFilter" onchange="renderLeads()"></select>
+        <span class="flbl">Relance</span>
+        <select class="glass fsel" id="relanceFilter" onchange="renderLeads()">
+          <option value="all">Toutes</option><option value="retard">⚠️ En retard</option><option value="today">Aujourd'hui</option><option value="future">À venir</option><option value="none">Sans relance</option></select>
+        <span class="flbl">Tél.</span>
+        <select class="glass fsel" id="phoneFilter" onchange="renderLeads()">
+          <option value="all">Tous</option><option value="with">Avec n°</option><option value="without">Sans n°</option></select>
+        <button class="btn btn-sm" onclick="resetFilters()">✖ Réinit.</button>
         <div class="spacer"></div>
-        <button class="btn btn-sm" onclick="exportCSV()">⬇️ Export CSV</button>
+        <span id="leadsCounter" style="font-size:13px;color:var(--muted);align-self:center"></span>
+        <button class="btn btn-sm" onclick="exportCSV()">⬇️ Export</button>
       </div>
+      <div class="bulkbar" id="bulkBar" style="display:none"></div>
       <div class="panel" style="padding:0">
         <div class="table-wrap"><table>
-          <thead><tr><th>Société / Contact</th><th>Téléphone</th><th>Statut</th><th>Priorité</th><th>Relance</th><th>Segment</th><th>Valeur</th><th>Actions</th></tr></thead>
+          <thead><tr><th style="width:36px"><input type="checkbox" id="selAll" onclick="toggleSelectAll(this.checked)"></th><th>Société / Contact</th><th>Téléphone</th><th>Statut</th><th>Priorité</th><th>Relance</th><th>Segment</th><th>Valeur</th><th>Actions</th></tr></thead>
           <tbody id="leadsBody"></tbody>
         </table></div>
         <div class="empty" id="leadsEmpty" style="display:none"><div class="big">📭</div>
@@ -457,6 +475,7 @@ const statusById = id => STATUSES.find(s=>s.id===id)||STATUSES[0];
 let sb=null, me=null, leads=[], segments=[], users=[];
 let activeStatusFilter='all', activePrioFilter='all', activeSegFilter='all';
 let authMode='login', dragLeadId=null;
+let selectedIds=new Set();
 
 /* ---------- INIT ---------- */
 window.addEventListener('DOMContentLoaded', init);
@@ -556,17 +575,27 @@ async function reloadData(){
     const {data:acc}=await sb.from('segment_access').select('*');
     window._access=acc||[];
   }
-  // leads (RLS filtre automatiquement)
-  const {data:ls}=await sb.from('leads').select('*').order('created_at',{ascending:false});
-  leads=ls||[];
+  // leads (RLS filtre automatiquement) — pagination pour dépasser la limite de 1000
+  leads=await fetchAllLeads();
   fillSelects();
   refreshAll();
-  toast2('Données à jour');
+}
+async function fetchAllLeads(){
+  const all=[]; const size=1000; let from=0;
+  while(true){
+    const {data,error}=await sb.from('leads').select('*').order('created_at',{ascending:false}).range(from,from+size-1);
+    if(error){ toastErr(cleanErr(error)); break; }
+    all.push(...(data||[]));
+    if(!data||data.length<size) break;
+    from+=size;
+    if(from>=200000) break;
+  }
+  return all;
 }
 function subscribeRealtime(){
   try{
     sb.channel('leads-rt').on('postgres_changes',{event:'*',schema:'public',table:'leads'},()=>{
-      sb.from('leads').select('*').order('created_at',{ascending:false}).then(({data})=>{ if(data){leads=data;refreshAll();} });
+      fetchAllLeads().then(d=>{ leads=d; refreshAll(); });
     }).subscribe();
   }catch(e){}
 }
@@ -618,6 +647,12 @@ function fillSelects(){
   document.getElementById('f_assigned').innerHTML=assignOpts;
   // filtre segment
   document.getElementById('segFilter').innerHTML='<option value="all">Tous</option>'+segments.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+  // filtre source (valeurs distinctes)
+  const sf=document.getElementById('sourceFilter');
+  if(sf){ const cur=sf.value; const sources=[...new Set(leads.map(l=>l.source).filter(Boolean))].sort(); sf.innerHTML='<option value="all">Toutes</option>'+sources.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join(''); if([...sf.options].some(o=>o.value===cur)) sf.value=cur; }
+  // filtre assigné
+  const af=document.getElementById('assignedFilter');
+  if(af){ const cur=af.value; af.innerHTML='<option value="all">Tous</option><option value="__none">Non assigné</option>'+users.filter(u=>u.role==='commercial').map(u=>`<option value="${u.id}">${escapeHtml(u.full_name||u.email)}</option>`).join(''); if([...af.options].some(o=>o.value===cur)) af.value=cur; }
 }
 
 /* ---------- LEAD MODAL ---------- */
@@ -720,13 +755,20 @@ function buildStatusFilters(){
   c.querySelectorAll('.status-filter').forEach(ch=>ch.onclick=()=>{activeStatusFilter=ch.dataset.status;c.querySelectorAll('.status-filter').forEach(x=>x.classList.toggle('active',x===ch));renderLeads()});
   document.querySelectorAll('.prio-filter').forEach(ch=>ch.onclick=()=>{activePrioFilter=ch.dataset.prio;document.querySelectorAll('.prio-filter').forEach(x=>x.classList.toggle('active',x===ch));renderLeads()});
 }
+function getFilterVal(id){ const e=document.getElementById(id); return e?e.value:'all'; }
 function filteredLeads(){
   const q=(document.getElementById('searchInput').value||'').toLowerCase();
   activeSegFilter=document.getElementById('segFilter').value;
+  const src=getFilterVal('sourceFilter'),asg=getFilterVal('assignedFilter'),rel=getFilterVal('relanceFilter'),ph=getFilterVal('phoneFilter');
+  const t=todayStr();
   return leads.filter(l=>{
     if(activeStatusFilter!=='all'&&l.status!==activeStatusFilter) return false;
     if(activePrioFilter!=='all'&&(l.priority||'froid')!==activePrioFilter) return false;
     if(activeSegFilter!=='all'&&l.segment_id!==activeSegFilter) return false;
+    if(src!=='all'&&(l.source||'')!==src) return false;
+    if(asg!=='all'){ if(asg==='__none'){ if(l.assigned_to) return false; } else if(l.assigned_to!==asg) return false; }
+    if(rel!=='all'){ if(rel==='none'){ if(l.followup) return false; } else if(!l.followup) return false; else if(rel==='retard'&&!(l.followup<t)) return false; else if(rel==='today'&&l.followup!==t) return false; else if(rel==='future'&&!(l.followup>t)) return false; }
+    if(ph!=='all'){ const has=!!(l.phone||l.mobile); if(ph==='with'&&!has) return false; if(ph==='without'&&has) return false; }
     if(q){const hay=[l.company,l.contact,l.phone,l.mobile,l.city,l.sector,l.email,(l.tags||[]).join(' ')].join(' ').toLowerCase();if(!hay.includes(q))return false}
     return true;
   });
@@ -734,18 +776,23 @@ function filteredLeads(){
 function statusBadge(l){const s=statusById(l.status);return `<span class="badge" style="background:${hexA(s.color,.18)};color:${s.color};border:1px solid ${hexA(s.color,.4)}"><span class="dot" style="background:${s.color}"></span>${s.label}</span>`}
 function statusSelectInline(l){return `<select class="glass" style="padding:6px 8px;font-size:12px;width:auto" onchange="quickStatus('${l.id}',this.value)">${STATUSES.map(s=>`<option value="${s.id}" ${s.id===l.status?'selected':''}>${s.label}</option>`).join('')}</select>`}
 function segPill(l){const s=segById(l.segment_id);if(!s)return'<span style="color:var(--muted)">—</span>';return `<span class="seg-pill" style="background:${hexA(s.color,.18)};color:${s.color};border-color:${hexA(s.color,.4)}">${escapeHtml(s.name)}</span>`}
+const RENDER_CAP=1000;
 function renderLeads(){
   buildStatusFilters();
   const list=filteredLeads();
   document.getElementById('leadsCountLabel').textContent=leads.length;
+  const counter=document.getElementById('leadsCounter');
+  if(counter) counter.textContent=`${list.length} affichés · ${leads.length} au total`;
   const body=document.getElementById('leadsBody'),empty=document.getElementById('leadsEmpty');
   document.getElementById('emptyHint').textContent=me.role==='admin'?'Importe une base ou ajoute un lead.':'Aucun lead dans tes segments pour l\'instant.';
-  if(leads.length===0){ body.innerHTML=''; empty.style.display='block'; return; }
+  if(leads.length===0){ body.innerHTML=''; empty.style.display='block'; updateBulkBar(); return; }
   empty.style.display='none';
-  body.innerHTML=list.map(l=>{
+  const shown=list.slice(0,RENDER_CAP);
+  body.innerHTML=shown.map(l=>{
     const phone=l.phone||l.mobile||'',prio=l.priority||'froid';
     const prioLbl={chaud:'🔴 Chaud',tiede:'🟡 Tiède',froid:'🔵 Froid'}[prio];
     return `<tr>
+      <td><input type="checkbox" class="lead-cb" ${selectedIds.has(l.id)?'checked':''} onclick="event.stopPropagation();toggleSelect('${l.id}',this.checked)"></td>
       <td class="co-cell" onclick="openLeadModal('${l.id}')" style="cursor:pointer">${escapeHtml(l.company||'—')}<div class="small">${escapeHtml(l.contact||'')}${l.role?' · '+escapeHtml(l.role):''}</div>${(l.tags||[]).slice(0,3).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join(' ')}</td>
       <td>${phone?`<a class="phone-link" href="${telHref(phone)}" onclick="logCall('${l.id}')">${escapeHtml(phone)}</a>`:'<span style="color:var(--muted)">—</span>'}</td>
       <td>${statusSelectInline(l)}</td>
@@ -758,8 +805,37 @@ function renderLeads(){
         ${phone?`<a class="icon-btn wa" href="${waHref(phone)}" target="_blank" title="WhatsApp">💬</a>`:''}
         <button class="icon-btn" onclick="openLeadModal('${l.id}')" title="Éditer">✏️</button>
       </div></td></tr>`;
-  }).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:40px">Aucun lead ne correspond à ce filtre.</td></tr>';
+  }).join('')||'<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">Aucun lead ne correspond à ces filtres.</td></tr>';
+  if(list.length>RENDER_CAP){ body.innerHTML+=`<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:16px">… et ${list.length-RENDER_CAP} autres. Affine les filtres, ou coche « tout sélectionner » pour agir sur les ${list.length}.</td></tr>`; }
+  const selAll=document.getElementById('selAll'); if(selAll) selAll.checked=list.length>0&&list.every(l=>selectedIds.has(l.id));
+  updateBulkBar();
 }
+
+/* ---------- SÉLECTION & ACTIONS GROUPÉES ---------- */
+function toggleSelect(id,ch){ if(ch)selectedIds.add(id); else selectedIds.delete(id); const list=filteredLeads(); const selAll=document.getElementById('selAll'); if(selAll) selAll.checked=list.length>0&&list.every(l=>selectedIds.has(l.id)); updateBulkBar(); }
+function toggleSelectAll(ch){ const list=filteredLeads(); if(ch) list.forEach(l=>selectedIds.add(l.id)); else list.forEach(l=>selectedIds.delete(l.id)); renderLeads(); }
+function clearSelection(){ selectedIds.clear(); renderLeads(); }
+function resetFilters(){ activeStatusFilter='all'; activePrioFilter='all'; const s=document.getElementById('searchInput'); if(s)s.value=''; ['segFilter','sourceFilter','assignedFilter','relanceFilter','phoneFilter'].forEach(id=>{const e=document.getElementById(id); if(e) e.value='all';}); renderLeads(); }
+function updateBulkBar(){
+  const bar=document.getElementById('bulkBar'); if(!bar) return;
+  const n=selectedIds.size;
+  if(n===0){ bar.style.display='none'; bar.innerHTML=''; return; }
+  const isAdmin=me.role==='admin';
+  bar.style.display='flex';
+  bar.innerHTML=`<b>${n} sélectionné(s)</b>
+    <button class="btn btn-sm" onclick="clearSelection()">Tout désélectionner</button>
+    <div class="spacer"></div>
+    <select class="glass fsel" onchange="bulkStatus(this.value);this.value=''"><option value="">Changer statut →</option>${STATUSES.map(s=>`<option value="${s.id}">${s.label}</option>`).join('')}</select>
+    ${isAdmin?`<select class="glass fsel" onchange="bulkSegment(this.value);this.value=''"><option value="">Déplacer vers segment →</option>${segments.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}</select>`:''}
+    ${isAdmin?`<select class="glass fsel" onchange="bulkAssign(this.value);this.value=''"><option value="">Assigner à →</option><option value="__none">— Personne —</option>${users.filter(u=>u.role==='commercial').map(u=>`<option value="${u.id}">${escapeHtml(u.full_name||u.email)}</option>`).join('')}</select>`:''}
+    <button class="btn btn-sm" onclick="exportCSV(true)">⬇️ Exporter sélection</button>
+    ${isAdmin?`<button class="btn btn-sm del" onclick="bulkDelete()">🗑️ Supprimer</button>`:''}`;
+}
+async function bulkChunks(ids,fn){ for(let i=0;i<ids.length;i+=200){ const {error}=await fn(ids.slice(i,i+200)); if(error){ toastErr(cleanErr(error)); return false; } } return true; }
+async function bulkStatus(status){ if(!status) return; const ids=[...selectedIds]; if(await bulkChunks(ids,ch=>sb.from('leads').update({status,last_contact:todayStr()}).in('id',ch))){ await reloadData(); toast(ids.length+' leads → '+statusById(status).label); } }
+async function bulkSegment(segId){ if(!segId) return; const ids=[...selectedIds]; if(await bulkChunks(ids,ch=>sb.from('leads').update({segment_id:segId}).in('id',ch))){ await reloadData(); toast(ids.length+' leads déplacés de segment'); } }
+async function bulkAssign(val){ if(!val) return; const ids=[...selectedIds]; const assigned=val==='__none'?null:val; if(await bulkChunks(ids,ch=>sb.from('leads').update({assigned_to:assigned}).in('id',ch))){ await reloadData(); toast(ids.length+' leads assignés'); } }
+async function bulkDelete(){ const ids=[...selectedIds]; if(!ids.length) return; if(!confirm('Supprimer définitivement '+ids.length+' lead(s) ?')) return; if(await bulkChunks(ids,ch=>sb.from('leads').delete().in('id',ch))){ selectedIds.clear(); await reloadData(); toast(ids.length+' leads supprimés'); } }
 
 /* ---------- DASHBOARD ---------- */
 function renderDashboard(){
@@ -973,9 +1049,9 @@ async function runImport(){
   const hasPhone=Object.values(mapping).some(f=>f==='phone'||f==='mobile');
   if(!hasPhone){ toastErr('Associe au moins une colonne Téléphone'); return; }
   const btn=document.getElementById('runImportBtn'); btn.disabled=true; btn.textContent='Import en cours…';
-  // clés existantes (sur tous les leads visibles ; en admin = toute la base)
-  const {data:existing}=await sb.from('leads').select('phone_key');
-  const existingKeys=new Set((existing||[]).map(l=>l.phone_key).filter(Boolean));
+  // clés existantes (toute la base, paginées pour dépasser la limite de 1000)
+  const existingKeys=new Set();
+  { let from=0; const size=1000; while(true){ const {data}=await sb.from('leads').select('phone_key').range(from,from+size-1); (data||[]).forEach(l=>{ if(l.phone_key) existingKeys.add(l.phone_key); }); if(!data||data.length<size) break; from+=size; if(from>=200000) break; } }
   let added=0,dupExisting=0,dupFile=0,noPhone=0;const seen=new Set(),toInsert=[];
   importRows.forEach(r=>{
     const obj={status:'nouveau',priority:'froid',tags:[],source:'Import',segment_id:segId,created_by:me.id,notes:[]};
@@ -1001,13 +1077,14 @@ async function runImport(){
 }
 function resetImport(){importRows=[];importHeaders=[];document.getElementById('importStep1').style.display='block';document.getElementById('importStep2').style.display='none';document.getElementById('importStep3').style.display='none';document.getElementById('fileInput').value=''}
 function downloadTemplate(){downloadFile('modele-leads.csv','Société,Contact,Fonction,Téléphone,Mobile,Email,Ville,Secteur,Source,Valeur\nDistrib Pro SARL,Jean Martin,Gérant,+33 1 23 45 67 89,+33 6 11 22 33 44,contact@distribpro.fr,Lyon,Restauration,Salon,8000\n')}
-function exportCSV(){
-  if(!leads.length){ toastErr('Aucun lead à exporter'); return; }
+function exportCSV(selectedOnly){
+  const src=selectedOnly?leads.filter(l=>selectedIds.has(l.id)):filteredLeads();
+  if(!src.length){ toastErr('Aucun lead à exporter'); return; }
   const cols=['company','contact','role','sector','phone','mobile','email','website','city','source','status','priority','value','followup'];
   const head=['Société','Contact','Fonction','Secteur','Téléphone','Mobile','Email','Site','Ville','Source','Statut','Priorité','Valeur','Relance'];
   const esc=v=>{v=(''+(v??''));return /[",;\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
-  const rows=filteredLeads().map(l=>cols.map(c=>c==='status'?statusById(l.status).label:esc(l[c])).join(','));
-  downloadFile('export-leads.csv',head.join(',')+'\n'+rows.join('\n')); toast('Export CSV téléchargé');
+  const rows=src.map(l=>cols.map(c=>c==='status'?statusById(l.status).label:esc(l[c])).join(','));
+  downloadFile('export-leads.csv',head.join(',')+'\n'+rows.join('\n')); toast(src.length+' leads exportés');
 }
 function downloadFile(name,content){const blob=new Blob(['﻿'+content],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click()}
 
