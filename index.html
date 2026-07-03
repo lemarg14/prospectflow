@@ -389,6 +389,11 @@ select.glass.fsel{width:auto;padding:7px 10px;font-size:13px}
         <span class="flbl">Tél.</span>
         <select class="glass fsel" id="phoneFilter" onchange="renderLeads()">
           <option value="all">Tous</option><option value="with">Avec n°</option><option value="without">Sans n°</option></select>
+        <span class="flbl">Activité</span>
+        <select class="glass fsel" id="dateFilter" onchange="onDateFilterChange()">
+          <option value="all">Toutes dates</option><option value="today">Aujourd'hui</option><option value="yesterday">Hier</option><option value="7days">7 derniers jours</option><option value="30days">30 derniers jours</option><option value="custom">Personnalisé…</option></select>
+        <input type="date" class="glass fsel" id="dateFrom" onchange="renderLeads()" style="display:none" title="Du">
+        <input type="date" class="glass fsel" id="dateTo" onchange="renderLeads()" style="display:none" title="Au">
         <button class="btn btn-sm" onclick="resetFilters()">✖ Réinit.</button>
         <div class="spacer"></div>
         <span id="leadsCounter" style="font-size:13px;color:var(--muted);align-self:center"></span>
@@ -412,6 +417,11 @@ select.glass.fsel{width:auto;padding:7px 10px;font-size:13px}
         <div class="spacer"></div>
         <span class="flbl">Segment</span>
         <select class="glass fsel" id="pipeSegFilter" onchange="renderPipeline()"></select>
+        <span class="flbl">Activité</span>
+        <select class="glass fsel" id="pipeDateFilter" onchange="onPipeDateChange()">
+          <option value="all">Toutes dates</option><option value="today">Aujourd'hui</option><option value="yesterday">Hier</option><option value="7days">7 derniers jours</option><option value="30days">30 derniers jours</option><option value="custom">Personnalisé…</option></select>
+        <input type="date" class="glass fsel" id="pipeDateFrom" onchange="renderPipeline()" style="display:none">
+        <input type="date" class="glass fsel" id="pipeDateTo" onchange="renderPipeline()" style="display:none">
         <button class="btn btn-primary" onclick="openLeadModal()">＋ Lead</button></div>
       <div class="board" id="pipelineBoard"></div>
     </section>
@@ -727,6 +737,11 @@ function telHref(p){ return 'tel:'+(''+p).replace(/[^\d+]/g,'') }
 function waHref(p){let d=(''+p).replace(/[^\d+]/g,'').replace(/^\+/,'').replace(/^0033/,'33');if(d.startsWith('0'))d='33'+d.slice(1);return 'https://wa.me/'+d}
 function segById(id){ return segments.find(s=>s.id===id) }
 function userById(id){ return users.find(u=>u.id===id) }
+function elVal(id){ const e=document.getElementById(id); return e?e.value:''; }
+function dateStrOffset(days){ const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10); }
+function matchDate(lc,mode,from,to){ if(!mode||mode==='all') return true; if(!lc) return false; const today=todayStr(); if(mode==='today') return lc===today; if(mode==='yesterday') return lc===dateStrOffset(-1); if(mode==='7days') return lc>=dateStrOffset(-6); if(mode==='30days') return lc>=dateStrOffset(-29); if(mode==='custom'){ if(from&&lc<from) return false; if(to&&lc>to) return false; return true; } return true; }
+function assigneeName(l){ const u=userById(l.assigned_to); return u?(u.full_name||u.email):''; }
+function lastNote(l){ const n=l.notes; if(!n||!n.length) return ''; const t=(n[n.length-1].text||''); return t.length>80?t.slice(0,80)+'…':t; }
 let toastT;
 function toast(m){const t=document.getElementById('toast');t.className='toast show';t.textContent=m;clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600)}
 function toastErr(m){const t=document.getElementById('toast');t.className='toast err show';t.textContent=m;clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),3500)}
@@ -810,6 +825,8 @@ async function saveLead(){
   };
   // assignation : seul l'admin peut la changer via le formulaire ; un commercial n'écrase pas ce champ
   if(me.role==='admin') payload.assigned_to=document.getElementById('f_assigned').value||null;
+  // une note = activité du jour (permet de suivre « qui a appelé quand »)
+  if(noteText) payload.last_contact=todayStr();
   try{
     if(id){
       const l=leads.find(x=>x.id===id);
@@ -875,6 +892,7 @@ function filteredLeads(){
     if(asg!=='all'){ if(asg==='__none'){ if(l.assigned_to) return false; } else if(l.assigned_to!==asg) return false; }
     if(rel!=='all'){ if(rel==='none'){ if(l.followup) return false; } else if(!l.followup) return false; else if(rel==='retard'&&!(l.followup<t)) return false; else if(rel==='today'&&l.followup!==t) return false; else if(rel==='future'&&!(l.followup>t)) return false; }
     if(ph!=='all'){ const has=!!(l.phone||l.mobile); if(ph==='with'&&!has) return false; if(ph==='without'&&has) return false; }
+    if(!matchDate(l.last_contact,getFilterVal('dateFilter'),elVal('dateFrom'),elVal('dateTo'))) return false;
     if(q){const hay=[l.company,l.contact,l.phone,l.mobile,l.city,l.sector,l.email,(l.tags||[]).join(' ')].join(' ').toLowerCase();if(!hay.includes(q))return false}
     return true;
   });
@@ -899,7 +917,7 @@ function renderLeads(){
     const prioLbl={chaud:'🔴 Chaud',tiede:'🟡 Tiède',froid:'🔵 Froid'}[prio];
     return `<tr>
       <td><input type="checkbox" class="lead-cb" ${selectedIds.has(l.id)?'checked':''} onclick="event.stopPropagation();toggleSelect('${l.id}',this.checked)"></td>
-      <td class="co-cell" onclick="openLeadModal('${l.id}')" style="cursor:pointer">${escapeHtml(l.company||'—')}<div class="small">${escapeHtml(l.contact||'')}${l.role?' · '+escapeHtml(l.role):''}</div>${(l.tags||[]).slice(0,3).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join(' ')}</td>
+      <td class="co-cell" onclick="openLeadModal('${l.id}')" style="cursor:pointer">${escapeHtml(l.company||'—')}<div class="small">${escapeHtml(l.contact||'')}${l.role?' · '+escapeHtml(l.role):''}</div>${l.last_contact?`<div class="small" style="color:var(--accent2)">📞 ${new Date(l.last_contact).toLocaleDateString('fr-FR')}${assigneeName(l)?' · '+escapeHtml(assigneeName(l)):''}</div>`:''}${(l.tags||[]).slice(0,3).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join(' ')}</td>
       <td>${phone?`<a class="phone-link" href="${telHref(phone)}" onclick="logCall('${l.id}')">${escapeHtml(phone)}</a>`:'<span style="color:var(--muted)">—</span>'}</td>
       <td>${statusSelectInline(l)}</td>
       <td><span class="prio ${prio}">${prioLbl}</span></td>
@@ -921,7 +939,9 @@ function renderLeads(){
 function toggleSelect(id,ch){ if(ch)selectedIds.add(id); else selectedIds.delete(id); const list=filteredLeads(); const selAll=document.getElementById('selAll'); if(selAll) selAll.checked=list.length>0&&list.every(l=>selectedIds.has(l.id)); updateBulkBar(); }
 function toggleSelectAll(ch){ const list=filteredLeads(); if(ch) list.forEach(l=>selectedIds.add(l.id)); else list.forEach(l=>selectedIds.delete(l.id)); renderLeads(); }
 function clearSelection(){ selectedIds.clear(); renderLeads(); }
-function resetFilters(){ activeStatusFilter='all'; activePrioFilter='all'; const s=document.getElementById('searchInput'); if(s)s.value=''; ['segFilter','sourceFilter','assignedFilter','relanceFilter','phoneFilter'].forEach(id=>{const e=document.getElementById(id); if(e) e.value='all';}); renderLeads(); }
+function resetFilters(){ activeStatusFilter='all'; activePrioFilter='all'; const s=document.getElementById('searchInput'); if(s)s.value=''; ['segFilter','sourceFilter','assignedFilter','relanceFilter','phoneFilter','dateFilter'].forEach(id=>{const e=document.getElementById(id); if(e) e.value='all';}); ['dateFrom','dateTo'].forEach(id=>{const e=document.getElementById(id); if(e){e.value='';e.style.display='none';}}); renderLeads(); }
+function onDateFilterChange(){ const v=document.getElementById('dateFilter').value; const disp=v==='custom'?'inline-block':'none'; ['dateFrom','dateTo'].forEach(id=>{const e=document.getElementById(id); if(e) e.style.display=disp;}); renderLeads(); }
+function onPipeDateChange(){ const v=document.getElementById('pipeDateFilter').value; const disp=v==='custom'?'inline-block':'none'; ['pipeDateFrom','pipeDateTo'].forEach(id=>{const e=document.getElementById(id); if(e) e.style.display=disp;}); renderPipeline(); }
 function updateBulkBar(){
   const bar=document.getElementById('bulkBar'); if(!bar) return;
   const n=selectedIds.size;
@@ -982,12 +1002,14 @@ function renderTeamStats(){
 /* ---------- PIPELINE (drag&drop) ---------- */
 function renderPipeline(){
   const seg=getFilterVal('pipeSegFilter');
-  const base=seg==='all'?leads:leads.filter(l=>l.segment_id===seg);
+  const dm=getFilterVal('pipeDateFilter');
+  let base=seg==='all'?leads:leads.filter(l=>l.segment_id===seg);
+  base=base.filter(l=>matchDate(l.last_contact,dm,elVal('pipeDateFrom'),elVal('pipeDateTo')));
   document.getElementById('pipelineBoard').innerHTML=STATUSES.map(s=>{
     const items=base.filter(l=>l.status===s.id);
     return `<div class="col"><div class="col-head"><span class="dot" style="background:${s.color}"></span>${s.label}<span class="col-count">${items.length}</span></div>
       <div class="col-body" data-status="${s.id}" ondragover="pipeOver(event,this)" ondragleave="this.classList.remove('drop-target')" ondrop="pipeDrop(event,this,'${s.id}')">
-      ${items.map(l=>{const phone=l.phone||l.mobile||'';return `<div class="mini-card" draggable="true" ondragstart="pipeStart(event,'${l.id}')" ondragend="pipeEnd(event)" onclick="openLeadModal('${l.id}')"><div class="co"><span class="grip">⠿</span>${escapeHtml(l.company||'—')}</div><div class="ct">${escapeHtml(l.contact||'')}</div><div class="row2"><span class="prio ${l.priority||'froid'}">${({chaud:'🔴',tiede:'🟡',froid:'🔵'})[l.priority||'froid']}</span>${phone?`<a class="phone-link" style="font-size:12px" href="${telHref(phone)}" onclick="event.stopPropagation();logCall('${l.id}')">${escapeHtml(phone)}</a>`:''}</div></div>`}).join('')||'<p style="color:var(--muted);font-size:12px;text-align:center;padding:14px">Glisse un lead ici</p>'}
+      ${items.map(l=>{const phone=l.phone||l.mobile||'';const nt=lastNote(l);return `<div class="mini-card" draggable="true" ondragstart="pipeStart(event,'${l.id}')" ondragend="pipeEnd(event)" onclick="openLeadModal('${l.id}')"><div class="co"><span class="grip">⠿</span>${escapeHtml(l.company||'—')}</div><div class="ct">${escapeHtml(l.contact||'')}</div><div class="row2"><span class="prio ${l.priority||'froid'}">${({chaud:'🔴',tiede:'🟡',froid:'🔵'})[l.priority||'froid']}</span>${phone?`<a class="phone-link" style="font-size:12px" href="${telHref(phone)}" onclick="event.stopPropagation();logCall('${l.id}')">${escapeHtml(phone)}</a>`:''}</div>${l.last_contact?`<div style="font-size:11px;color:var(--accent2);margin-top:6px">📞 ${new Date(l.last_contact).toLocaleDateString('fr-FR')}${assigneeName(l)?' · '+escapeHtml(assigneeName(l)):''}</div>`:''}${nt?`<div style="font-size:11px;margin-top:5px;background:var(--glass-strong);border:1px solid var(--border);border-radius:8px;padding:6px 8px">💬 ${escapeHtml(nt)}</div>`:''}</div>`}).join('')||'<p style="color:var(--muted);font-size:12px;text-align:center;padding:14px">Aucun lead</p>'}
       </div></div>`;
   }).join('');
 }
@@ -1188,11 +1210,11 @@ function downloadTemplate(){downloadFile('modele-leads.csv','Société,Contact,F
 function exportCSV(selectedOnly){
   const src=selectedOnly?leads.filter(l=>selectedIds.has(l.id)):filteredLeads();
   if(!src.length){ toastErr('Aucun lead à exporter'); return; }
-  const cols=['company','contact','role','sector','phone','mobile','email','website','city','source','status','priority','value','followup'];
-  const head=['Société','Contact','Fonction','Secteur','Téléphone','Mobile','Email','Site','Ville','Source','Statut','Priorité','Valeur','Relance'];
+  const cols=['company','contact','role','sector','phone','mobile','email','website','city','source','status','priority','value','followup','last_contact'];
+  const head=['Société','Contact','Fonction','Secteur','Téléphone','Mobile','Email','Site','Ville','Source','Statut','Priorité','Valeur','Relance','Dernier contact'];
   const esc=v=>{v=(''+(v??''));return /[",;\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
-  const rows=src.map(l=>cols.map(c=>c==='status'?statusById(l.status).label:esc(l[c])).join(','));
-  downloadFile('export-leads.csv',head.join(',')+'\n'+rows.join('\n')); toast(src.length+' leads exportés');
+  const rows=src.map(l=>cols.map(c=>c==='status'?statusById(l.status).label:esc(l[c])).join(',')+','+esc(assigneeName(l)));
+  downloadFile('export-leads.csv',head.join(',')+',Assigné à\n'+rows.join('\n')); toast(src.length+' leads exportés');
 }
 function downloadFile(name,content){const blob=new Blob(['﻿'+content],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click()}
 
