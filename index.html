@@ -702,12 +702,18 @@ async function fetchAllLeads(){
   }
   return all;
 }
+let _syncing=false;
+async function syncLeads(){ if(_syncing) return; _syncing=true; try{ const d=await fetchAllLeads(); leads=d; refreshAll(); }catch(e){} _syncing=false; }
 function subscribeRealtime(){
+  // 1) temps réel : pousse les changements instantanément entre appareils
   try{
-    sb.channel('leads-rt').on('postgres_changes',{event:'*',schema:'public',table:'leads'},()=>{
-      fetchAllLeads().then(d=>{ leads=d; refreshAll(); });
-    }).subscribe();
+    sb.channel('leads-rt').on('postgres_changes',{event:'*',schema:'public',table:'leads'},()=>{ syncLeads(); }).subscribe();
   }catch(e){}
+  // 2) filet de sécurité : re-synchro quand on revient sur l'onglet + toutes les 20s
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') syncLeads(); });
+  window.addEventListener('focus',()=>syncLeads());
+  if(window._pollTimer) clearInterval(window._pollTimer);
+  window._pollTimer=setInterval(()=>{ if(document.visibilityState==='visible') syncLeads(); }, 20000);
 }
 
 /* ---------- NAV ---------- */
@@ -857,12 +863,19 @@ async function quickStatus(id,status){
   const l=leads.find(x=>x.id===id); if(l){l.status=status;l.last_contact=todayStr();}
   refreshAll(); toast('Statut → '+statusById(status).label);
 }
-async function logCall(id){
+async function logCall(id){ return _logTouch(id,'call'); }
+async function logWa(id){ return _logTouch(id,'wa'); }
+async function _logTouch(id,kind){
   const l=leads.find(x=>x.id===id); if(!l) return;
-  let notes=(l.notes||[]).concat([{date:new Date().toLocaleString('fr-FR'),text:'📞 Appel passé'}]);
-  const upd={last_contact:todayStr(),notes}; if(l.status==='nouveau') upd.status='contacte';
-  await sb.from('leads').update(upd).eq('id',id);
-  Object.assign(l,upd);
+  const txt=kind==='wa'?'💬 Message WhatsApp':'📞 Appel passé';
+  const notes=(l.notes||[]).concat([{date:new Date().toLocaleString('fr-FR'),text:txt}]);
+  const upd={last_contact:todayStr(),notes};
+  // passe en « Contacté » seulement si le lead est encore à un stade initial (pas de downgrade)
+  if(l.status==='nouveau'||l.status==='arappeler') upd.status='contacte';
+  Object.assign(l,upd);   // mise à jour immédiate de l'affichage
+  refreshAll();
+  const {error}=await sb.from('leads').update(upd).eq('id',id);
+  if(error) toastErr(cleanErr(error));
 }
 function cleanErr(e){
   const m=(e&&e.message)||String(e);
@@ -926,7 +939,7 @@ function renderLeads(){
       <td>${l.value?Number(l.value).toLocaleString('fr-FR')+' €':'—'}</td>
       <td><div class="action-btns">
         ${phone?`<a class="icon-btn call" href="${telHref(phone)}" onclick="logCall('${l.id}')" title="Appeler">📞</a>`:''}
-        ${phone?`<a class="icon-btn wa" href="${waHref(phone)}" target="_blank" title="WhatsApp">💬</a>`:''}
+        ${phone?`<a class="icon-btn wa" href="${waHref(phone)}" target="_blank" onclick="logWa('${l.id}')" title="WhatsApp">💬</a>`:''}
         <button class="icon-btn" onclick="openLeadModal('${l.id}')" title="Éditer">✏️</button>
       </div></td></tr>`;
   }).join('')||'<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">Aucun lead ne correspond à ces filtres.</td></tr>';
@@ -1026,7 +1039,7 @@ function renderRelances(){
   document.getElementById('relanceStats').innerHTML=[{label:'En retard',num:due,ic:'⚠️',c:'var(--bad)'},{label:'Aujourd\'hui',num:today,ic:'🔔',c:'var(--warn)'},{label:'À venir',num:up,ic:'📅',c:'var(--accent2)'}].map(s=>`<div class="panel stat"><div class="glow" style="background:${s.c}"></div><div class="label">${s.label}</div><div class="num">${s.num}</div><div class="ic">${s.ic}</div></div>`).join('');
   const body=document.getElementById('relanceBody');
   document.getElementById('relanceEmpty').style.display=list.length?'none':'block';
-  body.innerHTML=list.map(l=>{const phone=l.phone||l.mobile||'';return `<tr><td class="co-cell" style="cursor:pointer" onclick="openLeadModal('${l.id}')">${escapeHtml(l.company||'—')}<div class="small">${escapeHtml(l.contact||'')}</div></td><td>${phone?`<a class="phone-link" href="${telHref(phone)}" onclick="logCall('${l.id}')">${escapeHtml(phone)}</a>`:'—'}</td><td>${statusBadge(l)}</td><td>${relanceLabel(l.followup)}</td><td>${l.last_contact?new Date(l.last_contact).toLocaleDateString('fr-FR'):'<span style="color:var(--muted)">jamais</span>'}</td><td><div class="action-btns">${phone?`<a class="icon-btn call" href="${telHref(phone)}" onclick="logCall('${l.id}')">📞</a>`:''}${phone?`<a class="icon-btn wa" href="${waHref(phone)}" target="_blank">💬</a>`:''}<button class="icon-btn" onclick="snooze('${l.id}')" title="Repousser 7j">⏭️</button><button class="icon-btn" onclick="openLeadModal('${l.id}')">✏️</button></div></td></tr>`}).join('');
+  body.innerHTML=list.map(l=>{const phone=l.phone||l.mobile||'';return `<tr><td class="co-cell" style="cursor:pointer" onclick="openLeadModal('${l.id}')">${escapeHtml(l.company||'—')}<div class="small">${escapeHtml(l.contact||'')}</div></td><td>${phone?`<a class="phone-link" href="${telHref(phone)}" onclick="logCall('${l.id}')">${escapeHtml(phone)}</a>`:'—'}</td><td>${statusBadge(l)}</td><td>${relanceLabel(l.followup)}</td><td>${l.last_contact?new Date(l.last_contact).toLocaleDateString('fr-FR'):'<span style="color:var(--muted)">jamais</span>'}</td><td><div class="action-btns">${phone?`<a class="icon-btn call" href="${telHref(phone)}" onclick="logCall('${l.id}')">📞</a>`:''}${phone?`<a class="icon-btn wa" href="${waHref(phone)}" target="_blank" onclick="logWa('${l.id}')">💬</a>`:''}<button class="icon-btn" onclick="snooze('${l.id}')" title="Repousser 7j">⏭️</button><button class="icon-btn" onclick="openLeadModal('${l.id}')">✏️</button></div></td></tr>`}).join('');
 }
 async function snooze(id){const d=new Date();d.setDate(d.getDate()+7);const nd=d.toISOString().slice(0,10);await sb.from('leads').update({followup:nd}).eq('id',id);const l=leads.find(x=>x.id===id);if(l)l.followup=nd;refreshAll();toast('Relance repoussée de 7 jours')}
 
